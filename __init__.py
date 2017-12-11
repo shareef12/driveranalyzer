@@ -3,73 +3,36 @@
 """
 
 TODO:
-Support x86 and x64.
 Follow calls from _start to find the real DriverEntry when tail call optimization isn't used.
 Determine supported IOCTLs (support switch or branch on IOCTL code).
 Regenerate header files with CTL_CODE macro definitions.
 """
 
 from binaryninja import *
+from constants import *
 
 from pdb import set_trace as trace
 from pprint import pprint
 
-DRVOBJ_START_IO_OFFSET = 0x60
-DRVOBJ_DRIVER_UNLOAD_OFFSET = 0x68
-DRVOBJ_MJ_OFFSETS = {
-    0x70: "Create",
-    0x78: "CreateNamedPipe",
-    0x80: "Close",
-    0x88: "Read",
-    0x90: "Write",
-    0x98: "QueryInformation",
-    0xa0: "SetInformation",
-    0xa8: "QueryEa",
-    0xb0: "SetEa",
-    0xb8: "FlushBuffers",
-    0xc0: "QueryVolumeInformation",
-    0xc8: "SetVolumeInformation",
-    0xd0: "DirectoryControl",
-    0xd8: "FileSystemControl",
-    0xe0: "DeviceControl",
-    0xe8: "InternalDeviceControl",
-    0xf0: "Shutdown",
-    0xf8: "LockControl",
-    0x100: "Cleanup",
-    0x108: "CreateMailslot",
-    0x110: "QuerySecurity",
-    0x118: "SetSecurity",
-    0x120: "Power",
-    0x128: "SystemControl",
-    0x130: "DeviceChange",
-    0x138: "QueryQuota",
-    0x140: "SetQuota",
-    0x148: "Pnp",
-    0x150: "PnpPower"
-}
-
 class DispatchRoutine(object):
-    # static counters to ensure unique names
-    unknown_ctr = 0
-    multiple_ctr = 0
 
     def __init__(self, address):
         self.address = address
-        self.uses = []
+        self.irps = []
 
     @property
     def name(self):
-        if len(self.uses) == 0:
-            self.unknown_ctr += 1
-            return "DispatchUnknown{:d}".format(self.unknown_ctr)
-        elif len(self.uses) < 4:
-            return "Dispatch{:s}".format("".join(self.uses))
-        else:
-            self.multiple_ctr += 1
-            return "DispatchMultiple{:d}".format(self.multiple_ctr)
+        irps = [IRP_MJ_NAMES[i] for i in self.irps]
+        return "Dispatch{:s}".format("".join(irps))
+        
+    def add_irp(self, irp):
+        self.irps.append(irp)
 
-    def add_use(self, name):
-        self.uses.append(name)
+    def label(self, bv):
+        """Create a named function and insert comments about supported IRPs."""
+        irps = ["IRP_MJ_" + IRP_MJ_NAMES[i] for i in self.irps]
+        comment = "Dispatch routine for: \n" + "\n".join(irps)
+        create_named_function(bv, self.address, self.name, comment)
 
     def __str__(self):
         return "<{:s} 0x{:016x}>".format(self.name, self.address)
@@ -104,7 +67,6 @@ def get_store_offset_value(inst):
     return (offset, value)
 
 
-
 def get_dispatch_routines(bv):
     bv.update_analysis()
     entry = bv.entry_function
@@ -136,17 +98,19 @@ def get_dispatch_routines(bv):
 
     # Create functions and label them
     dispatch_routines = {}
-    create_named_function(bv, bv.entry_point, "DriverEntry")
+    entry.name = "DriverEntry"
+
     for offset, address in stores:
-        if offset == DRVOBJ_DRIVER_UNLOAD_OFFSET:
+        if offset == DRVOBJ_DRIVER_UNLOAD_OFFSET_X64:
             create_named_function(bv, address, "DriverUnload")
-        elif offset == DRVOBJ_START_IO_OFFSET:
+        elif offset == DRVOBJ_START_IO_OFFSET_X64:
             create_named_function(bv, address, "DriverStartIo")
-        elif offset in DRVOBJ_MJ_OFFSETS:
-            if address not in dispatch_routines:
+        elif (offset >= DRVOBJ_MAJOR_FUNCTION_OFFSET_X64 and 
+                offset <= DRVOBJ_MAJOR_FUNCTION_OFFSET_X64 + bv.arch.address_size * IRP_MJ_MAXIMUM_FUNCTION):
+            mj_function = (offset - DRVOBJ_MAJOR_FUNCTION_OFFSET_X64) / bv.arch.address_size
+            if not address in dispatch_routines:
                 dispatch_routines[address] = DispatchRoutine(address)
-            mj_function = DRVOBJ_MJ_OFFSETS[offset]
-            dispatch_routines[address].add_use(mj_function)
+            dispatch_routines[address].add_irp(mj_function)
 
     return dispatch_routines.values()
 
@@ -155,8 +119,7 @@ def label_dispatch_routines(bv):
     routines = get_dispatch_routines(bv)
     for routine in routines:
         print routine
-        irps = ["IRP_MJ_" + use for use in routine.uses]
-        create_named_function(bv, routine.address, routine.name, "Dispatch routine for: \n" + "\n".join(irps))
+        routine.label(bv)
     bv.commit_undo_actions()
     bv.update_analysis()
 
