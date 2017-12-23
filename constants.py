@@ -1,9 +1,18 @@
-DRVOBJ_START_IO_OFFSET_X86 = 0x00
-DRVOBJ_START_IO_OFFSET_X64 = 0x60
-DRVOBJ_DRIVER_UNLOAD_OFFSET_X86 = 0x00
-DRVOBJ_DRIVER_UNLOAD_OFFSET_X64 = 0x68
-DRVOBJ_MAJOR_FUNCTION_OFFSET_X86 = 0x00
-DRVOBJ_MAJOR_FUNCTION_OFFSET_X64 = 0x70
+class Offsets(object):
+    def __init__(self, address_size):
+        if address_size == 4:
+            self.DRVOBJ_START_IO_OFFSET = 0x30
+            self.DRVOBJ_DRIVER_UNLOAD_OFFSET = 0x34
+            self.DRVOBJ_MAJOR_FUNCTION_OFFSET = 0x38
+
+        elif address_size == 8:
+            self.DRVOBJ_START_IO_OFFSET = 0x60
+            self.DRVOBJ_DRIVER_UNLOAD_OFFSET = 0x68
+            self.DRVOBJ_MAJOR_FUNCTION_OFFSET = 0x70
+
+        self.DRVOBJ_LAST_MAJOR_FUNCTION_OFFSET = \
+            self.DRVOBJ_MAJOR_FUNCTION_OFFSET + address_size * IRP_MJ_MAXIMUM_FUNCTION
+
 
 IRP_MJ_CREATE                   = 0x00
 IRP_MJ_CREATE_NAMED_PIPE        = 0x01
