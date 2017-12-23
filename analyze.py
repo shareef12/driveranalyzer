@@ -13,16 +13,18 @@ class DispatchRoutine(object):
 
     @property
     def name(self):
-        irps = [constants.IRP_MJ_NAMES[i] for i in self.irps]
-        return "Dispatch{:s}".format("".join(irps))
+        if len(self.irps) > constants.IRP_MJ_MAXIMUM_FUNCTION / 2:
+            return "DispatchDefault"
+        irp_names = [constants.IRP_MJ_NAMES[i] for i in self.irps]
+        return "Dispatch{:s}".format("".join(irp_names))
 
     def add_irp(self, irp):
         self.irps.append(irp)
 
     def label(self, bv):
         """Create a named function and insert comments about supported IRPs."""
-        irps = ["IRP_MJ_" + constants.IRP_MJ_NAMES[i] for i in self.irps]
-        comment = "Dispatch routine for: \n" + "\n".join(irps)
+        irp_names = ["IRP_MJ_" + constants.IRP_MJ_NAMES[i] for i in self.irps]
+        comment = "Dispatch routine for: \n" + "\n".join(irp_names)
         util.create_named_function(bv, self.address, self.name, comment)
 
     def __repr__(self):
@@ -78,6 +80,7 @@ def get_driver_entry(bv):
     optimization is applied and _start and DriverEntry are folded into a
     single function.
     """
+
     _start = bv.entry_function
     if len(_start.basic_blocks) > 1:  # Tail-call optimized
         return _start
