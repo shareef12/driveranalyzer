@@ -1,6 +1,7 @@
 from binaryninja import LowLevelILOperation
 
 import constants
+import ioctl
 import util
 
 
@@ -100,6 +101,7 @@ def label_all(bv):
     util.create_named_function(bv, driver_entry.start, "DriverEntry")
 
     dispatch_table = get_dispatch_routines(bv, driver_entry)
-    device_control_func = dispatch_table[constants.IRP_MJ_DEVICE_CONTROL]
-    if device_control_func is not None:
-        pass    # TODO: Find IOCTLs!
+    dispatch_device_control = dispatch_table[constants.IRP_MJ_DEVICE_CONTROL]
+    if dispatch_device_control is not None:
+        print "Finding ioctls..."
+        ioctl.find_ioctls(bv, dispatch_device_control)
