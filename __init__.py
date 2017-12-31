@@ -2,8 +2,10 @@
 
 """
 TODO:
- - Function detection for FastIO, ThreadCreateNotify, ProcessCreateNotify, Workitems,
-   IoCsqInitialize, etc.
+ - Function detection for FastIO callbacks, ThreadCreateNotify, ProcessCreateNotify,
+   Workitems, IoCsqInitialize, etc.
+ - Recursively follow calls from DriverEntry for code that initializes the DriverObject when
+   finding dispatch routines. We currently only search DriverEntry.
 """
 
 import sys
@@ -39,5 +41,5 @@ if __name__ == "__main__":
     bv = BinaryViewType["PE"].open(sys.argv[1])
     main(bv)
 else:
-    PluginCommand.register("Analyze Driver", "Name dispatch functions and find valid IOCTLs",
+    PluginCommand.register("Analyze Driver", "Name dispatch routines and find valid IOCTLs",
                            action=main)

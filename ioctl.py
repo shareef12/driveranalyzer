@@ -1,10 +1,9 @@
 """
 TODO:
- - x86 structs for IRP and IOSL
-
-Errors
- - MDL copy function causes it to run forever (memset with a symbolic len will cause state
-   explosion.
+ - memory_endness isn't set correctly for x64 calling convention. Have to `swap32` the
+   solved ioctl. Figure out how to fix this and remove the `swap32` hack.
+ - State explosion can occur on a memcpy with a symbolic state. This can occur if
+   an IOCTL handling routine reads the len parameter from the symbolic IRP SystemBuffer.
  - NT_ASSERT compiles to int 0x2c, which pyvex doesn't lift
  - cr3 reading/writing isn't modeled well by pyvex
 """
@@ -14,16 +13,17 @@ import struct
 import time
 
 import angr
-from angr.calling_conventions import SimCCSystemVAMD64, PointerWrapper
+from angr.calling_conventions import SimCCStdcall, SimCCSystemVAMD64, PointerWrapper
 import claripy
 
 import constants
 
 
 class SimCCMicrosoftAMD64(SimCCSystemVAMD64):
-    """angr doesn't natively support Microsoft x64 stdcall calling convention."""
+    """Angr doesn't define the Microsoft x64 calling convention."""
     ARG_REGS = ['rcx', 'rdx', 'r8', 'r9']
-    CALLEE_CLEANUP = True   # stdcall
+    FP_ARG_REGS = ['xmm0', 'xmm1', 'xmm2', 'xmm3']
+    STACKARG_SP_BUFF = 32   # Shadow space
 
 
 class Structure(object):
@@ -41,15 +41,23 @@ class Structure(object):
 
 class SymbolicIrp(Structure):
     def __init__(self, address_bits):
-        self._fields = [
-            ("type", 16),
-            ("size", 16),
-            ("allocation_processor_number", 16),
-            ("reserved", 16),
-            ("mdl_address", address_bits),
-            ("flags", 32),
-            ("pad1", claripy.BVV(0, 32)),   # Concretize padding
+        if address_bits == 32:
+            self._fields = [
+                ("type", 16),
+                ("size", 16),
+                ("mdl_address", address_bits),
+                ("flags", 32)]
+        else:
+            self._fields = [
+                ("type", 16),
+                ("size", 16),
+                ("allocation_processor_number", 16),
+                ("reserved", 16),
+                ("mdl_address", address_bits),
+                ("flags", 32),
+                ("pad1", claripy.BVV(0, 32))]   # Concretize padding
 
+        self._fields += [
             ("associated_irp", address_bits),
             ("thread_list_entry", address_bits * 2),
             ("io_status_status", address_bits),
@@ -77,35 +85,45 @@ class SymbolicIrp(Structure):
             ("auxiliary_buffer", address_bits),
             ("list_entry", address_bits * 2),
             ("current_stack_location", address_bits),
-            ("original_file_object", address_bits),
-            ("irp_extension", address_bits),
-        ]
+            ("original_file_object", address_bits)]
+        if address_bits == 64:
+            self._fields += [("irp_extension", address_bits)]
+
         super(SymbolicIrp, self).__init__()
 
 
-class SymbolicDeviceControlIoStackLocation(Structure):
+class SymbolicDeviceIoControlIoStackLocation(Structure):
     def __init__(self, address_bits):
         self._fields = [
             ("major_function", claripy.BVV(constants.IRP_MJ_DEVICE_CONTROL, 8)),
             ("minor_function", 8),
             ("flags", 8),
-            ("control", 8),
-            ("pad1", claripy.BVV(0, 32)),   # concretize padding
+            ("control", 8)]
 
-            ("output_buffer_length", 32),
-            ("pad2", claripy.BVV(0, 32)),   # TODO: only on x64?
-            ("input_buffer_length", 32),
-            ("pad3", claripy.BVV(0, 32)),
-            ("io_control_code", 32),
-            ("pad4", claripy.BVV(0, 32)),
-            ("type3_input_buffer", address_bits),
+        if address_bits == 32:
+            self._fields += [
+                ("output_buffer_length", 32),
+                ("input_buffer_length", 32),
+                ("io_control_code", 32),
+                ("type3_input_buffer", address_bits)]
+        else:
+            self._fields += [
+                ("pad1", claripy.BVV(0, 32)),   # concretize padding
+                ("output_buffer_length", 32),
+                ("pad2", claripy.BVV(0, 32)),
+                ("input_buffer_length", 32),
+                ("pad3", claripy.BVV(0, 32)),
+                ("io_control_code", 32),
+                ("pad4", claripy.BVV(0, 32)),
+                ("type3_input_buffer", address_bits)]
 
+        self._fields += [
             ("device_object", address_bits),
             ("file_object", address_bits),
             ("completion_routine", address_bits),
-            ("context", address_bits),
-        ]
-        super(SymbolicDeviceControlIoStackLocation, self).__init__()
+            ("context", address_bits)]
+
+        super(SymbolicDeviceIoControlIoStackLocation, self).__init__()
 
 
 def swap32(n):
@@ -135,11 +153,14 @@ def find_ioctls(filename, dispatch_device_control, address_size=8):
 
     # Create a call state with a symbolic IRP
     sirp = SymbolicIrp(address_size * 8)
-    siosl = SymbolicDeviceControlIoStackLocation(address_size * 8)
+    siosl = SymbolicDeviceIoControlIoStackLocation(address_size * 8)
     sirp.current_stack_location = PointerWrapper(siosl.pack())
     irp = sirp.pack()
 
-    cc = SimCCMicrosoftAMD64(proj.arch)
+    if address_size == 4:
+        cc = SimCCStdcall(proj.arch)
+    else:
+        cc = SimCCMicrosoftAMD64(proj.arch)
     state = proj.factory.call_state(dispatch_device_control,
                                     claripy.BVS("DeviceObject", 64), irp,
                                     cc=cc, ret_addr=0xdeadbeef)
@@ -165,7 +186,14 @@ def find_ioctls(filename, dispatch_device_control, address_size=8):
     # Return a map of IOCTL codes to a list of handler addresses
     ioctls = collections.defaultdict(list)
     for s in simgr.found:
-        code = swap32(s.solver.eval_one(siosl.io_control_code))
-        start = s.solver.eval_one(s.regs.rip)
+        # For some reason, the memory_endness for x64 symbolic variables isn't getting
+        # set correctly. Account for little-endian manually.
+        if address_size == 4:
+            code = s.solver.eval_one(siosl.io_control_code)
+            start = s.solver.eval_one(s.regs.eip)
+        else:
+            code = swap32(s.solver.eval_one(siosl.io_control_code))
+            start = s.solver.eval_one(s.regs.rip)
         ioctls[code].append(start)
+
     return ioctls
