@@ -1,6 +1,12 @@
 #!/usr/bin/env python2
 
 """
+Driver Analyzer Binary Ninja Plugin
+
+This plugin can be used within the Binary Ninja GUI or standalone with the
+commercial or enterprise version to detect IRP dispatch routines and valid
+IOCTL codes in Windows kernel drivers.
+
 TODO:
  - Function detection for FastIO callbacks, ThreadCreateNotify, ProcessCreateNotify,
    Workitems, IoCsqInitialize, etc.
@@ -41,5 +47,5 @@ if __name__ == "__main__":
     bv = BinaryViewType["PE"].open(sys.argv[1])
     main(bv)
 else:
-    PluginCommand.register("Analyze Driver", "Name dispatch routines and find valid IOCTLs",
+    PluginCommand.register("Analyze Driver", "Find IRP dispatch routines and valid IOCTLs",
                            action=main)

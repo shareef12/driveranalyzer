@@ -40,7 +40,6 @@ def get_driver_entry(bv):
     optimization is applied and _start and DriverEntry are folded into a
     single function.
     """
-
     _start = bv.entry_function
     if len(_start.basic_blocks) > 1:  # Tail-call optimized
         return _start
@@ -56,15 +55,20 @@ def get_driver_entry(bv):
 
 
 def label_dispatch_routines(bv, driver_entry):
-    """Get a list of all IRP_MJ dispatch routines set up in DriverEntry. Label
-        all driver callback routines.
+    """Label DriverUnload, DriverStartIo, and all found IRP dispatch routines.
 
-    Find all routines by searching for constant value stores to certain
-    offsets in the DriverObject.
+    Find dispatch routines by searching for constant value stores to certain
+    offsets in the DriverObject. Label them and return a table of dispatch
+    routines indexed by the IRP major function they handle.
     """
     print "Finding dispatch routines..."
 
     # Get all constant stores to offsets of the DriverObject
+    dispatch_table = [None] * constants.IRP_MJ_MAXIMUM_FUNCTION
+    if len(driver_entry.parameter_vars == 0):
+        print "Done. Found 0 routines."
+        return dispatch_table
+
     mlil = driver_entry.medium_level_il
     driver_object = driver_entry.parameter_vars[0]
     stores = util.get_offset_stores(mlil, driver_object)
@@ -72,7 +76,6 @@ def label_dispatch_routines(bv, driver_entry):
     # Create functions and label them. Don't label an IRP dispatch routine
     # until we know about every IRP it handles.
     dispatch_routines = {}
-    dispatch_table = [None] * constants.IRP_MJ_MAXIMUM_FUNCTION
     consts = constants.Offsets(bv.arch.address_size)
     for offset, address in stores:
         if offset == consts.DRVOBJ_DRIVER_UNLOAD_OFFSET:
@@ -99,6 +102,11 @@ def label_dispatch_routines(bv, driver_entry):
 
 
 def label_ioctls(bv, dispatch_device_control):
+    """Find supported IOCTLs and print corresponding CTL_CODE macros.
+
+    For each IOCTL, add a comment at the start of the handling code denoting
+    which IOCTL is being handled. Print the CTL_CODE macro to the log console.
+    """
     print "Finding ioctls..."
     ioctls = ioctl.find_ioctls(bv.file.filename, dispatch_device_control, bv.arch.address_size)
     for code in sorted(ioctls):
@@ -110,11 +118,13 @@ def label_ioctls(bv, dispatch_device_control):
 
 
 def label_all(bv):
+    """Find and label DriverEntry, IRP dispatch routines, and IOCTLs."""
     driver_entry = get_driver_entry(bv)
     util.create_named_function(bv, driver_entry.start, "DriverEntry")
 
     dispatch_table = label_dispatch_routines(bv, driver_entry)
     dispatch_device_control = dispatch_table[constants.IRP_MJ_DEVICE_CONTROL]
     bv.update_analysis_and_wait()
+
     if dispatch_device_control is not None:
         label_ioctls(bv, dispatch_device_control)

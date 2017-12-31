@@ -15,9 +15,7 @@ def get_store_offset_value(inst):
 
     :return: Tuple of (offset, value)
     """
-
     value = inst.src.value.value
-
     offset = 0
     inst = inst.dest
     while inst.operation != MediumLevelILOperation.MLIL_VAR:
@@ -41,7 +39,6 @@ def get_offset_stores(mlil, variable):
 
     :return: List of tuples. [(offset, value), (offset, value)]
     """
-
     stores = []
     uses = mlil.get_var_uses(variable)
     while len(uses) > 0:

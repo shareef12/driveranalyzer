@@ -26,7 +26,15 @@ class SimCCMicrosoftAMD64(SimCCSystemVAMD64):
     STACKARG_SP_BUFF = 32   # Shadow space
 
 
-class Structure(object):
+class SymbolicStructure(object):
+    """Base class for symbolic structures.
+
+    Child classes should define the _fields member as a list of tuples, where
+    each tuple is a (name, size) pair. If size is an int, the field will be
+    converted to a symbolic variable. Otherwise, it will remain as defined in
+    the child class.
+    """
+
     def __init__(self):
         self._fields = getattr(self, "_fields", [])
         for name, value in self._fields:
@@ -36,10 +44,11 @@ class Structure(object):
                 setattr(self, name, value)
 
     def pack(self):
+        """Return a representation that can be used by angr as a function argument."""
         return tuple(getattr(self, n) for n, _ in self._fields)
 
 
-class SymbolicIrp(Structure):
+class SymbolicIrp(SymbolicStructure):
     def __init__(self, address_bits):
         if address_bits == 32:
             self._fields = [
@@ -92,7 +101,7 @@ class SymbolicIrp(Structure):
         super(SymbolicIrp, self).__init__()
 
 
-class SymbolicDeviceIoControlIoStackLocation(Structure):
+class SymbolicDeviceIoControlIoStackLocation(SymbolicStructure):
     def __init__(self, address_bits):
         self._fields = [
             ("major_function", claripy.BVV(constants.IRP_MJ_DEVICE_CONTROL, 8)),
@@ -148,7 +157,12 @@ def get_macro(code):
 
 
 def find_ioctls(filename, dispatch_device_control, address_size=8):
-    """Symbolically explore the dispatch function to find IOCTLs"""
+    """Symbolically explore the dispatch function to find supported IOCTLs.
+
+    We want to symbolically explore the function until we enter a state
+    where the IOCTL is constrained to a single value. Return a map of IOCTL
+    codes to a list of addresses where the handling code starts.
+    """
     proj = angr.Project(filename, auto_load_libs=False)
 
     # Create a call state with a symbolic IRP
