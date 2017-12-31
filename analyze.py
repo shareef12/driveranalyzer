@@ -32,47 +32,6 @@ class DispatchRoutine(object):
         return "<{:s} 0x{:016x}>".format(self.name, self.address)
 
 
-def get_dispatch_routines(bv, driver_entry):
-    """Get a list of all IRP_MJ dispatch routines set up in DriverEntry. Label
-        all driver callback routines.
-
-    Find all routines by searching for constant value stores to certain
-    offsets in the DriverObject.
-    """
-
-    # Get all constant stores to offsets of the DriverObject
-    mlil = driver_entry.medium_level_il
-    driver_object = driver_entry.parameter_vars[0]
-    stores = util.get_offset_stores(mlil, driver_object)
-
-    # Create functions and label them. Don't label an IRP dispatch routine
-    # until we know about every IRP it handles.
-    dispatch_routines = {}
-    dispatch_table = [None] * constants.IRP_MJ_MAXIMUM_FUNCTION
-    consts = constants.Offsets(bv.arch.address_size)
-    for offset, address in stores:
-        if offset == consts.DRVOBJ_DRIVER_UNLOAD_OFFSET:
-            util.create_named_function(bv, address, "DriverUnload")
-
-        elif offset == consts.DRVOBJ_START_IO_OFFSET:
-            util.create_named_function(bv, address, "DriverStartIo")
-
-        elif consts.DRVOBJ_MAJOR_FUNCTION_OFFSET <= offset <= consts.DRVOBJ_LAST_MAJOR_FUNCTION_OFFSET:
-            mj_function = (offset - consts.DRVOBJ_MAJOR_FUNCTION_OFFSET) / bv.arch.address_size
-            if address not in dispatch_routines:
-                dispatch_routines[address] = DispatchRoutine(address)
-            dispatch_routines[address].add_irp(mj_function)
-            dispatch_table[mj_function] = dispatch_routines[address]
-
-    # Now that we have complete info about IRP handlers, label them.
-    for routine in dispatch_routines.values():
-        print routine
-        routine.label(bv)
-
-    # Return a list of IRP handlers in the form of a dispatch table
-    return dispatch_table
-
-
 def get_driver_entry(bv):
     """Get the DriverEntry function.
 
@@ -96,12 +55,66 @@ def get_driver_entry(bv):
     return entry
 
 
+def label_dispatch_routines(bv, driver_entry):
+    """Get a list of all IRP_MJ dispatch routines set up in DriverEntry. Label
+        all driver callback routines.
+
+    Find all routines by searching for constant value stores to certain
+    offsets in the DriverObject.
+    """
+    print "Finding dispatch routines..."
+
+    # Get all constant stores to offsets of the DriverObject
+    mlil = driver_entry.medium_level_il
+    driver_object = driver_entry.parameter_vars[0]
+    stores = util.get_offset_stores(mlil, driver_object)
+
+    # Create functions and label them. Don't label an IRP dispatch routine
+    # until we know about every IRP it handles.
+    dispatch_routines = {}
+    dispatch_table = [None] * constants.IRP_MJ_MAXIMUM_FUNCTION
+    consts = constants.Offsets(bv.arch.address_size)
+    for offset, address in stores:
+        if offset == consts.DRVOBJ_DRIVER_UNLOAD_OFFSET:
+            util.create_named_function(bv, address, "DriverUnload")
+
+        elif offset == consts.DRVOBJ_START_IO_OFFSET:
+            util.create_named_function(bv, address, "DriverStartIo")
+
+        elif consts.DRVOBJ_MAJOR_FUNCTION_OFFSET <= offset <= consts.DRVOBJ_LAST_MAJOR_FUNCTION_OFFSET:
+            mj_function = (offset - consts.DRVOBJ_MAJOR_FUNCTION_OFFSET) / bv.arch.address_size
+            if address not in dispatch_routines:
+                dispatch_routines[address] = DispatchRoutine(address)
+            dispatch_routines[address].add_irp(mj_function)
+            dispatch_table[mj_function] = address
+
+    # Now that we have complete info about IRP handlers, label them.
+    print "Done. Found {:d} routines.".format(len(dispatch_routines))
+    for routine in dispatch_routines.values():
+        print routine.name, hex(routine.address)
+        routine.label(bv)
+
+    # Return a list of IRP handlers in the form of a dispatch table
+    return dispatch_table
+
+
+def label_ioctls(bv, dispatch_device_control):
+    print "Finding ioctls..."
+    ioctls = ioctl.find_ioctls(bv.file.filename, dispatch_device_control, bv.arch.address_size)
+    for code in sorted(ioctls):
+        print ioctl.get_macro(code)
+        for address in ioctls[code]:
+            funcs = bv.get_functions_containing(address)
+            assert len(funcs) == 1
+            funcs[0].set_comment_at(address, "Handler for IOCTL_{:x}".format(code))
+
+
 def label_all(bv):
     driver_entry = get_driver_entry(bv)
     util.create_named_function(bv, driver_entry.start, "DriverEntry")
 
-    dispatch_table = get_dispatch_routines(bv, driver_entry)
+    dispatch_table = label_dispatch_routines(bv, driver_entry)
     dispatch_device_control = dispatch_table[constants.IRP_MJ_DEVICE_CONTROL]
+    bv.update_analysis_and_wait()
     if dispatch_device_control is not None:
-        print "Finding ioctls..."
-        ioctl.find_ioctls(bv, dispatch_device_control)
+        label_ioctls(bv, dispatch_device_control)

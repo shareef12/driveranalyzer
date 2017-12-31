@@ -1,156 +1,171 @@
 """
 TODO:
-Verify that IRP and IOSL offsets are correct for both x86 and x64
-Find out how to import angr in binja python - binja overrides sys.path
-Look at how PEFile manages its structs. Maybe we can do something similar to
-    remove repetition between __init__() and packed() methods.
-Test
+ - x86 structs for IRP and IOSL
+
+Errors
+ - MDL copy function causes it to run forever (memset with a symbolic len will cause state
+   explosion.
+ - NT_ASSERT compiles to int 0x2c, which pyvex doesn't lift
+ - cr3 reading/writing isn't modeled well by pyvex
 """
 
+import collections
 import struct
 import time
 
 import angr
+from angr.calling_conventions import SimCCSystemVAMD64, PointerWrapper
 import claripy
 
 import constants
 
 
-class SimCCMicrosoftAMD64(angr.calling_conventions.SimCCSystemVAMD64):
+class SimCCMicrosoftAMD64(SimCCSystemVAMD64):
     """angr doesn't natively support Microsoft x64 stdcall calling convention."""
     ARG_REGS = ['rcx', 'rdx', 'r8', 'r9']
-    #CALLEE_CLEANUP = True  # stdcall
+    CALLEE_CLEANUP = True   # stdcall
 
 
-class SymbolicDeviceControlIoStackLocation(object):
+class Structure(object):
+    def __init__(self):
+        self._fields = getattr(self, "_fields", [])
+        for name, value in self._fields:
+            if type(value) in (int, long):
+                setattr(self, name, claripy.BVS(name, value))
+            else:
+                setattr(self, name, value)
 
-    def __init__(self, address_size):
-        self.major_function = claripy.BVV(constants.IRP_MJ_DEVICE_CONTROL, 1)   # Concretize!
-        self.minor_function = claripy.BVS("MinorFunction", 1)
-        self.flags = claripy.BVS("Flags", 1)
-        self.control = claripy.BVS("Control", 1)
-
-        self.output_buffer_length = claripy.BVS("OutputBufferLength", 4)
-        self.input_buffer_length = claripy.BVS("InputBufferLength", 4)
-        self.io_control_code = claripy.BVS("IoControlCode", 4)
-        self.type3_input_buffer = claripy.BVS("Type3InputBuffer", address_size)
-
-    def packed(self):
-        return [
-            self.major_function,
-            self.minor_function,
-            self.flags,
-            self.control,
-            self.output_buffer_length,
-            self.input_buffer_length,
-            self.io_control_code,
-            self.type3_input_buffer]
+    def pack(self):
+        return tuple(getattr(self, n) for n, _ in self._fields)
 
 
-class SymbolicIrp(object):
+class SymbolicIrp(Structure):
+    def __init__(self, address_bits):
+        self._fields = [
+            ("type", 16),
+            ("size", 16),
+            ("allocation_processor_number", 16),
+            ("reserved", 16),
+            ("mdl_address", address_bits),
+            ("flags", 32),
+            ("pad1", claripy.BVV(0, 32)),   # Concretize padding
 
-    def __init__(self, address_size):
-        self.type = claripy.BVS("Type", 16)
-        self.size = claripy.BVS("Size", 16)
-        self.mdl_address = claripy.BVS("MdlAddress", address_size)
-        self.flags = claripy.BVS("Flags", 32)
+            ("associated_irp", address_bits),
+            ("thread_list_entry", address_bits * 2),
+            ("io_status_status", address_bits),
+            ("io_status_information", address_bits),
 
-        self.associated_irp = claripy.BVS("AssociatedIrp", address_size)
-        self.thread_list_entry = claripy.BVS("ThreadListEntry", address_size * 2)
-        self.io_status_status = claripy.BVS("IoStatusStatus", address_size)
-        self.io_status_information = claripy.BVS("IoStatusInformation", address_size)
+            ("requestor_mode", 8),
+            ("pending_returned", 8),
+            ("stack_count", 8),
+            ("current_location", 8),
+            ("cancel", 8),
+            ("cancel_irql", 8),
+            ("apc_environment", 8),
+            ("allocation_flags", 8),
 
-        self.requestor_mode = claripy.BVS("RequestorMode", 1)
-        self.pending_returned = claripy.BVS("PendingReturned", 1)
-        self.stack_count = claripy.BVS("StackCount", 1)
-        self.current_location = claripy.BVS("CurrentLocation", 1)
-        self.cancel = claripy.BVS("Cancel", 1)
-        self.cancel_irql = claripy.BVS("CancelIrql", 1)
-        self.apc_environment = claripy.BVS("ApcEnvironment", 1)
-        self.allocation_flags = claripy.BVS("AllocationFlags", 1)
+            # User fields
+            ("user_iosb", address_bits),
+            ("user_event", address_bits),
+            ("overlay", address_bits * 2),
+            ("cancel_routine", address_bits),
+            ("user_buffer", address_bits),
 
-        # User fields
-        self.user_iosb = claripy.BVS("UserIosb", address_size)
-        self.user_event = claripy.BVS("UserEvent", address_size)
-        self.overlay = claripy.BVS("Overlay", address_size * 2)
-        self.cancel_routine = claripy.BVS("CancelRoutine", address_size)
-        self.user_buffer = claripy.BVS("UserBuffer", address_size)
+            # Kernel fields. Members of Tail.Overlay.
+            ("driver_context", address_bits * 4),
+            ("thread", address_bits),
+            ("auxiliary_buffer", address_bits),
+            ("list_entry", address_bits * 2),
+            ("current_stack_location", address_bits),
+            ("original_file_object", address_bits),
+            ("irp_extension", address_bits),
+        ]
+        super(SymbolicIrp, self).__init__()
 
-        # Kernel fields. Following fields are part of the Tail.Overlay struct
-        # Concretize the current_stack_location field since it's used to lookup
-        # the current IRP stack location.
-        self.driver_context = claripy.BVS("DriverContext", address_size * 4)
-        self.thread = claripy.BVS("Thread", address_size)
-        self.auxiliary_buffer = claripy.BVS("AuxiliaryBuffer", address_size)
-        self.list_entry = claripy.BVS("ListEntry", address_size * 2)
-        self.current_stack_location = claripy.BVV(1, address_size)
 
-    def packed(self):
-        return [
-            self.type,
-            self.size,
-            self.mdl_address,
-            self.flags,
-            self.associated_irp,
-            self.thread_list_entry,
-            self.io_status_status,
-            self.io_status_information,
-            self.requestor_mode,
-            self.pending_returned,
-            self.stack_count,
-            self.current_location,
-            self.cancel,
-            self.cancel_irql,
-            self.apc_environment,
-            self.allocation_flags,
-            self.user_iosb,
-            self.user_event,
-            self.overlay,
-            self.cancel_routine,
-            self.user_buffer,
-            self.driver_context,
-            self.thread,
-            self.auxiliary_buffer,
-            self.list_entry,
-            self.current_stack_location]
+class SymbolicDeviceControlIoStackLocation(Structure):
+    def __init__(self, address_bits):
+        self._fields = [
+            ("major_function", claripy.BVV(constants.IRP_MJ_DEVICE_CONTROL, 8)),
+            ("minor_function", 8),
+            ("flags", 8),
+            ("control", 8),
+            ("pad1", claripy.BVV(0, 32)),   # concretize padding
+
+            ("output_buffer_length", 32),
+            ("pad2", claripy.BVV(0, 32)),   # TODO: only on x64?
+            ("input_buffer_length", 32),
+            ("pad3", claripy.BVV(0, 32)),
+            ("io_control_code", 32),
+            ("pad4", claripy.BVV(0, 32)),
+            ("type3_input_buffer", address_bits),
+
+            ("device_object", address_bits),
+            ("file_object", address_bits),
+            ("completion_routine", address_bits),
+            ("context", address_bits),
+        ]
+        super(SymbolicDeviceControlIoStackLocation, self).__init__()
 
 
 def swap32(n):
     return struct.unpack("<I", struct.pack(">I", n))[0]
 
 
-def find_ioctls(bv, dispatch_device_control):
+def get_macro(code):
+    """Convert a IOCTL code into a CTL_CODE macro string."""
+    type = (code >> 16) & 0xffff
+    access = (code >> 14) & 0x03
+    function = (code >> 2) & 0x0fff
+    method = code & 0x03
+
+    try:
+        stype = constants.DEVICE_TYPES[type]
+    except KeyError:
+        stype = "FILE_DEVICE_CUSTOM_{:x}".format(type)
+    saccess = constants.ACCESS[access]
+    smethod = constants.METHODS[method]
+    return "#define IOCTL_{:x}      CTL_CODE({:s}, {:d}, {:s}, {:s})".format(
+        code, stype, function, smethod, saccess)
+
+
+def find_ioctls(filename, dispatch_device_control, address_size=8):
     """Symbolically explore the dispatch function to find IOCTLs"""
-    proj = angr.Project(bv.file.filename, auto_load_libs=False)
+    proj = angr.Project(filename, auto_load_libs=False)
 
     # Create a call state with a symbolic IRP
-    sirp = SymbolicIrp(bv.arch.address_size)
-    siosl = SymbolicDeviceControlIoStackLocation(bv.arch.address_size)
-    irp = sirp.packed() + siosl.packed()
+    sirp = SymbolicIrp(address_size * 8)
+    siosl = SymbolicDeviceControlIoStackLocation(address_size * 8)
+    sirp.current_stack_location = PointerWrapper(siosl.pack())
+    irp = sirp.pack()
 
     cc = SimCCMicrosoftAMD64(proj.arch)
-    state = proj.factory.call_state(dispatch_device_control, irp, cc=cc, ret_addr=0xdeadbeef,
-                                    add_options={angr.options.UNICORN})
+    state = proj.factory.call_state(dispatch_device_control,
+                                    claripy.BVS("DeviceObject", 64), irp,
+                                    cc=cc, ret_addr=0xdeadbeef)
+
+    def ioctl_constrained(st):
+        """Return true if the IOCTL code is constrained to a single value."""
+        try:
+            st.solver.eval_one(siosl.io_control_code)
+            return True
+        except angr.SimValueError:
+            return False
 
     # Run until all states finish
-    print "running..."
-    start = time.time()
     simgr = proj.factory.simgr(state)
+    print "Running symbolic analysis..."
+    start = time.time()
     while len(simgr.active) > 0:
-        simgr.explore(find=0xdeadbeef)
+        simgr.explore(find=ioctl_constrained, avoid=0xdeadbeef)
     stop = time.time()
-    print "done. Took", stop - start, "seconds"
+    print "Done. Took {:f} seconds. Found {:d} IOCTLs.".format(stop - start, len(simgr.found))
+    #print simgr
 
-    print simgr
-
+    # Return a map of IOCTL codes to a list of handler addresses
+    ioctls = collections.defaultdict(list)
     for s in simgr.found:
-        #print s.simplify()
-        try:
-            code = swap32(s.solver.eval_one(siosl.io_control_code))
-            print "[+]", code
-            if s.regs.rax.concrete:
-                print "[+]   ret =", hex(s.solver.eval(s.regs.rax))
-        except angr.SimValueError as err:
-            print s.simplify(), s.regs.rax
-
-    print 'done'
+        code = swap32(s.solver.eval_one(siosl.io_control_code))
+        start = s.solver.eval_one(s.regs.rip)
+        ioctls[code].append(start)
+    return ioctls
