@@ -10,12 +10,8 @@ def create_named_function(bv, address, name, comment=None):
         func.set_comment_at(address, comment)
 
 
-def get_store_offset_value(inst):
-    """Get the store offset and constant source value.
-
-    :return: Tuple of (offset, value)
-    """
-    value = inst.src.value.value
+def get_store_offset(inst):
+    """Get the store offset."""
     offset = 0
     inst = inst.dest
     while inst.operation != MediumLevelILOperation.MLIL_VAR:
@@ -25,34 +21,48 @@ def get_store_offset_value(inst):
             inst = inst.left
         else:
             raise RuntimeError(inst)
+    return offset
 
-    return offset, value
 
-
-def get_offset_stores(mlil, variable):
-    """Get a list of all constant stores that occurred at an offset from the
+def get_stores_by_offset(function, variable):
+    """Get a list of all stores that occurred at an offset from the
         given variable.
 
-    Perform a breadth-first search of all variable uses. Traverse the def-use
-    chain and record the offset and source of all stores with a constant
-    source.
+    Perform a breadth-first search of all variable defs and uses. Traverse the
+    use-def and def-use chain to handle pointer aliasing and record the offset
+    and source of all stores. Assumes that there is only a single store per
+    offset.
 
-    :return: List of tuples. [(offset, value), (offset, value)]
+    :return: Dictionary of stores. {offset: value, offset: value}
     """
-    stores = []
+    stores = {}
+    mlil = function.medium_level_il
+
+    # Follow the use-def chain
+    defs = mlil.get_var_definitions(variable)
+    while len(defs) > 0:
+        inst = mlil[defs.pop(0)]
+        if inst.operation == MediumLevelILOperation.MLIL_SET_VAR and \
+                inst.src.operation == MediumLevelILOperation.MLIL_VAR:
+            src = inst.src.src
+            defs += mlil.get_var_definitions(src)
+
+        # Record stores
+        elif inst.operation == MediumLevelILOperation.MLIL_STORE:
+            offset = get_store_offset(inst)
+            stores[offset] = inst.src
+
+    # Follow the def-use chain
     uses = mlil.get_var_uses(variable)
     while len(uses) > 0:
-        use = mlil[uses[0]]
-        uses = uses[1:]
-
-        # Record constant stores
-        if use.operation == MediumLevelILOperation.MLIL_STORE and use.src.value.is_constant:
-            off, val = get_store_offset_value(use)
-            stores.append((off, val))
-
-        # Get new uses
-        if use.operation == MediumLevelILOperation.MLIL_SET_VAR:
-            dest = use.dest
+        inst = mlil[uses.pop(0)]
+        if inst.operation == MediumLevelILOperation.MLIL_SET_VAR:
+            dest = inst.dest
             uses += mlil.get_var_uses(dest)
+
+        # Record stores
+        elif inst.operation == MediumLevelILOperation.MLIL_STORE:
+            offset = get_store_offset(inst)
+            stores[offset] = inst.src
 
     return stores

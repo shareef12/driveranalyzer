@@ -54,37 +54,26 @@ def get_driver_entry(bv):
     return entry
 
 
-def label_dispatch_routines(bv, driver_entry):
+def label_fastio_dispatch_routines(bv, driver_entry, stores):
+    """"""
+    pass
+
+
+def label_irp_dispatch_routines(bv, stores):
     """Label DriverUnload, DriverStartIo, and all found IRP dispatch routines.
 
     Find dispatch routines by searching for constant value stores to certain
     offsets in the DriverObject. Label them and return a table of dispatch
     routines indexed by the IRP major function they handle.
     """
-    print "Finding dispatch routines..."
-
-    # Get all constant stores to offsets of the DriverObject
-    dispatch_table = [None] * constants.IRP_MJ_MAXIMUM_FUNCTION
-    if len(driver_entry.parameter_vars == 0):
-        print "Done. Found 0 routines."
-        return dispatch_table
-
-    mlil = driver_entry.medium_level_il
-    driver_object = driver_entry.parameter_vars[0]
-    stores = util.get_offset_stores(mlil, driver_object)
 
     # Create functions and label them. Don't label an IRP dispatch routine
     # until we know about every IRP it handles.
     dispatch_routines = {}
+    dispatch_table = [None] * constants.IRP_MJ_MAXIMUM_FUNCTION
     consts = constants.Offsets(bv.arch.address_size)
-    for offset, address in stores:
-        if offset == consts.DRVOBJ_DRIVER_UNLOAD_OFFSET:
-            util.create_named_function(bv, address, "DriverUnload")
-
-        elif offset == consts.DRVOBJ_START_IO_OFFSET:
-            util.create_named_function(bv, address, "DriverStartIo")
-
-        elif consts.DRVOBJ_MAJOR_FUNCTION_OFFSET <= offset <= consts.DRVOBJ_LAST_MAJOR_FUNCTION_OFFSET:
+    for offset, address in stores.iteritems():
+        if consts.DRVOBJ_MAJOR_FUNCTION_OFFSET <= offset <= consts.DRVOBJ_LAST_MAJOR_FUNCTION_OFFSET:
             mj_function = (offset - consts.DRVOBJ_MAJOR_FUNCTION_OFFSET) / bv.arch.address_size
             if address not in dispatch_routines:
                 dispatch_routines[address] = DispatchRoutine(address)
@@ -92,12 +81,41 @@ def label_dispatch_routines(bv, driver_entry):
             dispatch_table[mj_function] = address
 
     # Now that we have complete info about IRP handlers, label them.
-    print "Done. Found {:d} routines.".format(len(dispatch_routines))
+    print "Done. Found {:d} IRP dispatch routines.".format(len(dispatch_routines))
     for routine in dispatch_routines.values():
         print routine.name, hex(routine.address)
         routine.label(bv)
 
     # Return a list of IRP handlers in the form of a dispatch table
+    return dispatch_table
+
+
+def label_driver_object_routines(bv, driver_entry):
+    """Label DriverUnload, DriverStartIo, and all found IRP dispatch routines."""
+    print "Labeling DriverObject callback routines."
+    if len(driver_entry.parameter_vars) == 0:
+        print "Done. Found 0 routines."
+        return [None] * constants.IRP_MJ_MAXIMUM_FUNCTION
+
+    # Get all stores to offsets of the DriverObject
+    driver_object = driver_entry.parameter_vars[0]
+    stores = util.get_stores_by_offset(driver_entry, driver_object)
+    constant_src_stores = {k: v.value.value for k, v in stores.iteritems() if v.value.is_constant}
+
+    # Label DriverUnload
+    offsets = constants.Offsets(bv.arch.address_size)
+    addr = constant_src_stores.get(offsets.DRVOBJ_DRIVER_UNLOAD_OFFSET)
+    if addr:
+        util.create_named_function(bv, addr, "DriverUnload")
+
+    # Label DriverStartIo
+    addr = constant_src_stores.get(offsets.DRVOBJ_START_IO_OFFSET)
+    if addr:
+        util.create_named_function(bv, addr, "DriverStartIo")
+
+    # Label FastIo and IRP dispatch routines
+    label_fastio_dispatch_routines(bv, driver_entry, stores)
+    dispatch_table = label_irp_dispatch_routines(bv, constant_src_stores)
     return dispatch_table
 
 
@@ -122,9 +140,15 @@ def label_all(bv):
     driver_entry = get_driver_entry(bv)
     util.create_named_function(bv, driver_entry.start, "DriverEntry")
 
-    dispatch_table = label_dispatch_routines(bv, driver_entry)
-    dispatch_device_control = dispatch_table[constants.IRP_MJ_DEVICE_CONTROL]
+    dispatch_table = label_driver_object_routines(bv, driver_entry)
+
+    # TODO: Label other stuff based on function calls
     bv.update_analysis_and_wait()
 
+
+
+
+
+    dispatch_device_control = dispatch_table[constants.IRP_MJ_DEVICE_CONTROL]
     if dispatch_device_control is not None:
         label_ioctls(bv, dispatch_device_control)
