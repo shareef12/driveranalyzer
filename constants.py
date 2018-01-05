@@ -1,15 +1,21 @@
 class Offsets(object):
     def __init__(self, address_size):
         if address_size == 4:
+            self.FAST_IO_DISPATCH_START = 0x4
+            self.DRVOBJ_FAST_IO_DISPATCH_OFFSET = 0x28
             self.DRVOBJ_START_IO_OFFSET = 0x30
             self.DRVOBJ_DRIVER_UNLOAD_OFFSET = 0x34
             self.DRVOBJ_MAJOR_FUNCTION_OFFSET = 0x38
 
         elif address_size == 8:
+            self.FAST_IO_DISPATCH_START = 0x8
+            self.DRVOBJ_FAST_IO_DISPATCH_OFFSET = 0x50
             self.DRVOBJ_START_IO_OFFSET = 0x60
             self.DRVOBJ_DRIVER_UNLOAD_OFFSET = 0x68
             self.DRVOBJ_MAJOR_FUNCTION_OFFSET = 0x70
 
+        self.FAST_IO_DISPATCH_END = \
+            self.FAST_IO_DISPATCH_START + address_size * len(FAST_IO_NAMES)
         self.DRVOBJ_LAST_MAJOR_FUNCTION_OFFSET = \
             self.DRVOBJ_MAJOR_FUNCTION_OFFSET + address_size * IRP_MJ_MAXIMUM_FUNCTION
 
@@ -75,6 +81,36 @@ IRP_MJ_NAMES = {
     IRP_MJ_SET_QUOTA: "SetQuota",
     IRP_MJ_PNP: "Pnp",
 }
+
+FAST_IO_NAMES = [
+    "CheckIfPossible",
+    "Read",
+    "Write",
+    "QueryBasicInfo",
+    "QueryStandardInfo",
+    "Lock",
+    "UnlockSingle",
+    "UnlockAll",
+    "UnlockAllByKey",
+    "DeviceControl",
+    "AcquireFileForNtCreateSection",
+    "ReleaseFileForNtCreateSection",
+    "DetachDevice",
+    "QueryNetworkOpenInfo",
+    "AcquireForModWrite",
+    "MdlRead",
+    "MdlReadComplete",
+    "PrepareMdlWrite",
+    "MdlWriteComplete",
+    "ReadCompressed",
+    "WriteCompressed",
+    "MdlReadCompleteCompressed",
+    "MdlWriteCompleteCompressed",
+    "QueryOpen",
+    "ReleaseForModWrite",
+    "AcquireForCcFlush",
+    "ReleaseForCcFlush",
+]
 
 DEVICE_TYPES = {
    0x01: "FILE_DEVICE_BEEP",

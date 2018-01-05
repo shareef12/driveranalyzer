@@ -38,27 +38,27 @@ def get_stores_by_offset(function, variable):
     stores = {}
     mlil = function.medium_level_il
 
-    # Follow the use-def chain
+    # Follow the use-def chain to get a list of all definitions
+    uses = mlil.get_var_uses(variable)
     defs = mlil.get_var_definitions(variable)
     while len(defs) > 0:
-        inst = mlil[defs.pop(0)]
+        mlil_idx = defs.pop(0)
+        uses.append(mlil_idx)
+        inst = mlil[mlil_idx]
         if inst.operation == MediumLevelILOperation.MLIL_SET_VAR and \
                 inst.src.operation == MediumLevelILOperation.MLIL_VAR:
             src = inst.src.src
             defs += mlil.get_var_definitions(src)
 
-        # Record stores
-        elif inst.operation == MediumLevelILOperation.MLIL_STORE:
-            offset = get_store_offset(inst)
-            stores[offset] = inst.src
-
-    # Follow the def-use chain
-    uses = mlil.get_var_uses(variable)
+    # Follow the def-use chain for all defs while maintaining a set of visited uses
+    visited = set()
     while len(uses) > 0:
         inst = mlil[uses.pop(0)]
         if inst.operation == MediumLevelILOperation.MLIL_SET_VAR:
-            dest = inst.dest
-            uses += mlil.get_var_uses(dest)
+            for use in mlil.get_var_uses(inst.dest):
+                if use not in visited:
+                    visited.add(use)
+                    uses.append(use)
 
         # Record stores
         elif inst.operation == MediumLevelILOperation.MLIL_STORE:

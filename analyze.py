@@ -1,3 +1,5 @@
+import collections
+
 from binaryninja import LowLevelILOperation
 
 import constants
@@ -5,12 +7,10 @@ import ioctl
 import util
 
 
-class DispatchRoutine(object):
+class IrpDispatchRoutine(object):
     """Helper class to name dispatch routines semi-intelligently."""
-
-    def __init__(self, address):
-        self.address = address
-        self.irps = []
+    def __init__(self, irps):
+        self.irps = irps
 
     @property
     def name(self):
@@ -19,17 +19,51 @@ class DispatchRoutine(object):
         irp_names = [constants.IRP_MJ_NAMES[i] for i in self.irps]
         return "Dispatch{:s}".format("".join(irp_names))
 
-    def add_irp(self, irp):
-        self.irps.append(irp)
-
-    def label(self, bv):
-        """Create a named function and insert comments about supported IRPs."""
+    @property
+    def comment(self):
         irp_names = ["IRP_MJ_" + constants.IRP_MJ_NAMES[i] for i in self.irps]
-        comment = "Dispatch routine for: \n" + "\n".join(irp_names)
-        util.create_named_function(bv, self.address, self.name, comment)
+        return "Dispatch routine for: \n" + "\n".join(irp_names)
 
-    def __repr__(self):
-        return "<{:s} 0x{:016x}>".format(self.name, self.address)
+
+class FastIoDispatchRoutine(object):
+    """Helper class to name dispatch routines semi-intelligently."""
+    def __init__(self, routines):
+        self.routines = routines
+
+    @property
+    def name(self):
+        if len(self.routines) > len(constants.FAST_IO_NAMES) / 2:
+            return "FastIoDefault"
+        routine_names = [constants.FAST_IO_NAMES[i] for i in self.routines]
+        return "FastIo{:s}".format("".join(routine_names))
+
+    @property
+    def comment(self):
+        routine_names = ["FastIo" + constants.FAST_IO_NAMES[i] for i in self.routines]
+        return "Dispatch routine for: \n" + "\n".join(routine_names)
+
+
+class DispatchTable(object):
+    """Helper class to maintain the state of a dispatch table.
+
+    Maintain two structures:
+    1. Map of routine addresses to a list of callbacks they support (1 to many)
+    2. List of routine addresses indexed by the callback they support (1 to 1)
+    """
+    def __init__(self, size, routine_type):
+        self.routine_type = routine_type
+        self.routines = collections.defaultdict(list)
+        self.table = [None] * size
+
+    def add(self, address, routine):
+        self.routines[address].append(routine)
+        self.table[routine] = address
+
+    def label_all(self, bv):
+        for address, routines in self.routines.iteritems():
+            routine = self.routine_type(routines)
+            print hex(address), routine.name
+            util.create_named_function(bv, address, routine.name, routine.comment)
 
 
 def get_driver_entry(bv):
@@ -55,39 +89,40 @@ def get_driver_entry(bv):
 
 
 def label_fastio_dispatch_routines(bv, driver_entry, stores):
-    """"""
-    pass
+    """Label all found FastIo dispatch routines."""
+    offsets = constants.Offsets(bv.arch.address_size)
+    fastio_dispatch_table = stores.get(offsets.DRVOBJ_FAST_IO_DISPATCH_OFFSET)
+    if fastio_dispatch_table is None:
+        return
+
+    # Get stores setting up the FastIo dispatch table
+    stores = util.get_stores_by_offset(driver_entry, fastio_dispatch_table.src)
+    constant_src_stores = {k: v.value.value for k, v in stores.iteritems() if v.value.is_constant}
+
+    dispatch_table = DispatchTable(len(constants.FAST_IO_NAMES), FastIoDispatchRoutine)
+    for offset, address in constant_src_stores.iteritems():
+        if offsets.FAST_IO_DISPATCH_START <= offset <= offsets.FAST_IO_DISPATCH_END:
+            routine = (offset - offsets.FAST_IO_DISPATCH_START) / bv.arch.address_size
+            dispatch_table.add(address, routine)
+
+    dispatch_table.label_all(bv)
+    return dispatch_table.table
 
 
 def label_irp_dispatch_routines(bv, stores):
-    """Label DriverUnload, DriverStartIo, and all found IRP dispatch routines.
-
-    Find dispatch routines by searching for constant value stores to certain
-    offsets in the DriverObject. Label them and return a table of dispatch
-    routines indexed by the IRP major function they handle.
-    """
-
+    """Label all found IRP dispatch routines."""
     # Create functions and label them. Don't label an IRP dispatch routine
     # until we know about every IRP it handles.
-    dispatch_routines = {}
-    dispatch_table = [None] * constants.IRP_MJ_MAXIMUM_FUNCTION
-    consts = constants.Offsets(bv.arch.address_size)
+    dispatch_table = DispatchTable(constants.IRP_MJ_MAXIMUM_FUNCTION, IrpDispatchRoutine)
+    offsets = constants.Offsets(bv.arch.address_size)
     for offset, address in stores.iteritems():
-        if consts.DRVOBJ_MAJOR_FUNCTION_OFFSET <= offset <= consts.DRVOBJ_LAST_MAJOR_FUNCTION_OFFSET:
-            mj_function = (offset - consts.DRVOBJ_MAJOR_FUNCTION_OFFSET) / bv.arch.address_size
-            if address not in dispatch_routines:
-                dispatch_routines[address] = DispatchRoutine(address)
-            dispatch_routines[address].add_irp(mj_function)
-            dispatch_table[mj_function] = address
+        if offsets.DRVOBJ_MAJOR_FUNCTION_OFFSET <= offset <= offsets.DRVOBJ_LAST_MAJOR_FUNCTION_OFFSET:
+            mj_function = (offset - offsets.DRVOBJ_MAJOR_FUNCTION_OFFSET) / bv.arch.address_size
+            dispatch_table.add(address, mj_function)
 
-    # Now that we have complete info about IRP handlers, label them.
-    print "Done. Found {:d} IRP dispatch routines.".format(len(dispatch_routines))
-    for routine in dispatch_routines.values():
-        print routine.name, hex(routine.address)
-        routine.label(bv)
-
-    # Return a list of IRP handlers in the form of a dispatch table
-    return dispatch_table
+    print "Done. Found {:d} IRP dispatch routines.".format(len(dispatch_table.routines))
+    dispatch_table.label_all(bv)
+    return dispatch_table.table
 
 
 def label_driver_object_routines(bv, driver_entry):
@@ -104,14 +139,14 @@ def label_driver_object_routines(bv, driver_entry):
 
     # Label DriverUnload
     offsets = constants.Offsets(bv.arch.address_size)
-    addr = constant_src_stores.get(offsets.DRVOBJ_DRIVER_UNLOAD_OFFSET)
-    if addr:
-        util.create_named_function(bv, addr, "DriverUnload")
+    address = constant_src_stores.get(offsets.DRVOBJ_DRIVER_UNLOAD_OFFSET)
+    if address:
+        util.create_named_function(bv, address, "DriverUnload")
 
     # Label DriverStartIo
-    addr = constant_src_stores.get(offsets.DRVOBJ_START_IO_OFFSET)
-    if addr:
-        util.create_named_function(bv, addr, "DriverStartIo")
+    address = constant_src_stores.get(offsets.DRVOBJ_START_IO_OFFSET)
+    if address:
+        util.create_named_function(bv, address, "DriverStartIo")
 
     # Label FastIo and IRP dispatch routines
     label_fastio_dispatch_routines(bv, driver_entry, stores)
