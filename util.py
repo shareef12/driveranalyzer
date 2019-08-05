@@ -38,7 +38,10 @@ def get_stores_by_offset(function, variable):
     stores = {}
     mlil = function.medium_level_il
 
-    # Follow the use-def chain to get a list of all definitions
+    # Follow the use-def chain to get a list of all definitions.
+    # Add these to the set of uses to search later for stores, since
+    # a store could occur from either the original definition or the
+    # current one we're searching.
     uses = mlil.get_var_uses(variable)
     defs = mlil.get_var_definitions(variable)
     while len(defs) > 0:

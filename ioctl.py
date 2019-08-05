@@ -8,6 +8,7 @@ TODO:
  - cr3 reading/writing isn't modeled well by pyvex
 """
 
+from __future__ import print_function
 import collections
 import struct
 import time
@@ -189,13 +190,13 @@ def find_ioctls(filename, dispatch_device_control, address_size=8):
 
     # Run until all states finish
     simgr = proj.factory.simgr(state)
-    print "Running symbolic analysis..."
+    print("Running symbolic analysis...")
     start = time.time()
     while len(simgr.active) > 0:
         simgr.explore(find=ioctl_constrained, avoid=0xdeadbeef)
     stop = time.time()
-    print "Done. Took {:f} seconds. Found {:d} IOCTLs.".format(stop - start, len(simgr.found))
-    #print simgr
+    print("Done. Took {:f} seconds. Found {:d} IOCTLs.".format(stop - start, len(simgr.found)))
+    #print(simgr)
 
     # Return a map of IOCTL codes to a list of handler addresses
     ioctls = collections.defaultdict(list)
