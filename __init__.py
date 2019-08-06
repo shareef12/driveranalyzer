@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 r"""Windows Driver Analyzer Binary Ninja Plugin
 
@@ -20,7 +20,7 @@ import sys
 from binaryninja import BinaryViewType, BackgroundTaskThread, PluginCommand
 
 if sys.platform == "win32":
-    sys.path.append(r"C:\Python27\Lib\site-packages")
+    sys.path.append("C:\\Python27\\Lib\\site-packages")
 
 import analyze
 
@@ -97,6 +97,9 @@ def cmdline_main():
 
     # TODO: This line always returns None
     bv = BinaryViewType["PE"].open(args.driver)
+    if not bv:
+        print("[-] Error loading file: {:s}".format(args.driver), file=sys.stderr)
+        return 1
 
     analysis = analyze.Analysis(bv)
     analysis.label_driver_dispatch_routines()

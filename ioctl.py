@@ -190,7 +190,7 @@ def find_ioctls(filename, dispatch_device_control, address_size=8):
 
     # Run until all states finish
     simgr = proj.factory.simgr(state)
-    print("Running symbolic analysis...")
+    print("Running symbolic analysis")
     start = time.time()
     while len(simgr.active) > 0:
         simgr.explore(find=ioctl_constrained, avoid=0xdeadbeef)
