@@ -117,17 +117,28 @@ class Analysis:
         single function.
         """
         _start = self.bv.entry_function
-        if len(_start.basic_blocks) > 1:  # Tail-call optimized
+
+        # Tail-call optimized - binja didn't detect the optimization. _start
+        # and DriverEntry will appear to be a single function with multiple
+        # basic blocks. Common on x86.
+        if len(_start.basic_blocks) > 1:
             return _start
 
-        # Non-optimized. Get the call target of the second call
+        # Tail-call optimized - binja detected the optimization. _start will
+        # appear as a single basic block with a tailcall to DriverEntry. Common
+        # on x86.
         block = _start.low_level_il.basic_blocks[0]
+        if block[-1].operation == LowLevelILOperation.LLIL_TAILCALL:
+            call_target = block[-1].dest.value.value
+            return self.bv.get_function_at(call_target)
+
+        # Non-optimized. The second call in the basic block should be to
+        # DriverEntry. Common on x86_64.
         calls = [inst for inst in block if inst.operation == LowLevelILOperation.LLIL_CALL]
         assert (len(calls) == 2)
 
         call_target = calls[1].dest.value.value
-        entry = self.bv.get_function_at(call_target)
-        return entry
+        return self.bv.get_function_at(call_target)
 
 
     def _get_irp_major_function_table(self, drvobj_stores):
