@@ -188,7 +188,6 @@ class Analysis:
         the IRP MajorFunction table, and the FastIoDispatch table.
         """
         self.driver_entry = self._get_driver_entry()
-
         if len(self.driver_entry.parameter_vars) == 0:
             print("[-] Bad DriverEntry (0x{:x}): detected 0 parameters", self.driver_entry.start)
             return
@@ -255,11 +254,9 @@ class Analysis:
 
         ioctls = ioctl.find_ioctls(self.bv.file.filename, dispatch_device_control, self.bv.arch.address_size)
         print("[+] Found {:d} IOCTLs:".format(len(ioctls)))
-        print()
         for code in sorted(ioctls):
             print(ioctl.get_macro(code))
             for address in ioctls[code]:
                 funcs = self.bv.get_functions_containing(address)
                 assert len(funcs) == 1
                 funcs[0].set_comment_at(address, "Handler for IOCTL_{:x}".format(code))
-        print()
