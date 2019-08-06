@@ -1,4 +1,10 @@
-"""
+"""Use symbolic execution to determine supported IOCTLs.
+
+This function will attempt to symbolically execute the driver's IOCTL
+dispatch routine with a symbolid IRP. Once the IRP's io_control_code
+field is constrained to a single value, terminate the symbolic execution
+for that path and report the code as supported.
+
 TODO:
  - memory_endness isn't set correctly for x64 calling convention. Have to `swap32` the
    solved ioctl. Figure out how to fix this and remove the `swap32` hack.
@@ -11,7 +17,6 @@ TODO:
 from __future__ import print_function
 import collections
 import struct
-import time
 
 import angr
 from angr.calling_conventions import SimCCStdcall, SimCCSystemVAMD64, PointerWrapper
@@ -190,12 +195,8 @@ def find_ioctls(filename, dispatch_device_control, address_size=8):
 
     # Run until all states finish
     simgr = proj.factory.simgr(state)
-    print("Running symbolic analysis")
-    start = time.time()
     while len(simgr.active) > 0:
         simgr.explore(find=ioctl_constrained, avoid=0xdeadbeef)
-    stop = time.time()
-    print("Done. Took {:f} seconds. Found {:d} IOCTLs.".format(stop - start, len(simgr.found)))
     #print(simgr)
 
     # Return a map of IOCTL codes to a list of handler addresses

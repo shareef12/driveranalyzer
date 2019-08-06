@@ -6,6 +6,7 @@ from binaryninja import LowLevelILOperation
 
 import constants
 import ioctl
+import time
 import util
 
 
@@ -263,8 +264,12 @@ class Analysis:
                 print("[-] Could not find IRP_MJ_DEVICE_CONTROL dispatch routine")
                 return
 
+        print("[*] Running symbolic analysis")
+        start = time.time()
         ioctls = ioctl.find_ioctls(self.bv.file.filename, dispatch_device_control, self.bv.arch.address_size)
-        print("[+] Found {:d} IOCTLs:".format(len(ioctls)))
+        stop = time.time()
+        print("[+] Done. Found {:d} IOCTLs in {:f} seconds.".format(len(ioctls), stop - start))
+
         for code in sorted(ioctls):
             print(ioctl.get_macro(code))
             for address in ioctls[code]:
