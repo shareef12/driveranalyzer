@@ -15,6 +15,7 @@ TODO:
 """
 
 from __future__ import print_function
+from builtins import int    # python2/3 compatibility for isinstance() checks
 import collections
 import struct
 
@@ -44,7 +45,7 @@ class SymbolicStructure(object):
     def __init__(self):
         self._fields = getattr(self, "_fields", [])
         for name, value in self._fields:
-            if type(value) in (int, long):
+            if isinstance(value, int):
                 setattr(self, name, claripy.BVS(name, value))
             else:
                 setattr(self, name, value)
