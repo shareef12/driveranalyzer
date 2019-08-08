@@ -53,7 +53,7 @@ plugin will automatically add "C:\Python27\Lib\site-packages" to sys.path.
 
 This plugin requires the following minimum version of Binary Ninja:
 
- * 1822
+ * 1689
 
 
 ## Required Dependencies

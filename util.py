@@ -53,7 +53,7 @@ def get_stores_by_offset(function, variable):
     # the source variable as an alias and add it to the set of variables to search.
     defs = mlil.get_var_definitions(variable)
     while len(defs) > 0:
-        inst = defs.pop(0)
+        inst = mlil[defs.pop(0)]
         if (inst.operation == MediumLevelILOperation.MLIL_SET_VAR and
                 inst.src.operation == MediumLevelILOperation.MLIL_VAR):
             src = inst.src.src
@@ -68,7 +68,7 @@ def get_stores_by_offset(function, variable):
     uses = [mlil.get_var_uses(var) for var in aliases]
     uses = list(itertools.chain.from_iterable(uses))
     while len(uses) > 0:
-        inst = uses.pop(0)
+        inst = mlil[uses.pop(0)]
         if (inst.operation == MediumLevelILOperation.MLIL_SET_VAR and
                 inst.src.operation == MediumLevelILOperation.MLIL_VAR):
             dest = inst.dest
@@ -78,7 +78,8 @@ def get_stores_by_offset(function, variable):
     # We now have most (hopefully all) aliases for the given variable. Record
     # all stores that occurred using one of the aliases as the base address.
     for var in aliases:
-        for inst in mlil.get_var_uses(var):
+        for use in mlil.get_var_uses(var):
+            inst = mlil[use]
             if (inst.operation == MediumLevelILOperation.MLIL_STORE and
                     inst.src != var):
                 offset = get_store_offset(inst)
