@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-r"""Windows Driver Analyzer Binary Ninja Plugin
+"""Windows Driver Analyzer Binary Ninja Plugin
 
 This plugin can be used within the Binary Ninja GUI or standalone with the
 commercial or enterprise version to detect IRP dispatch routines and valid
@@ -10,6 +10,7 @@ TODO:
  - Function detection for ThreadCreateNotify, ProcessCreateNotify, Workitems, IoCsqInitialize, etc.
  - Recursively follow calls from DriverEntry for code that initializes the DriverObject when
    finding dispatch routines. We currently only search DriverEntry.
+ - Set function signatures for known functions
 """
 
 from __future__ import print_function

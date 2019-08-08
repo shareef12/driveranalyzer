@@ -12,6 +12,8 @@ attempt to identify valid IOCTL control codes that the driver supports.
 Handler code for detected IOCTLs will be labeled, and CTL\_CODE macros will be
 generated.
 
+![Demo Video](./demo.gif)
+
 
 ## Installation Instructions
 
