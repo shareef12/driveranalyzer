@@ -1,4 +1,4 @@
-# Windows Driver Analyzer (v0.1.0)
+# Windows Driver Analyzer (v1.0.0)
 
 Author: **shareef12**
 _Find IRP dispatch routines and valid IOCTLs in a Windows kernel driver_
@@ -6,11 +6,10 @@ _Find IRP dispatch routines and valid IOCTLs in a Windows kernel driver_
 
 ## Description:
 
-This plugin will try to find and label IRP dispatch routines through data-flow
-analysis of the DriverEntry routine. Additionally, this helper plugin will
-attempt to identify valid IOCTL control codes that the driver supports.
-Handler code for detected IOCTLs will be labeled, and CTL\_CODE macros will be
-generated.
+This plugin will try to find and label IRP dispatch routines initialized in the
+DriverEntry routine. Additionally, this plugin will attempt to identify valid
+IOCTL control codes that the driver supports. Handler code for detected IOCTLs
+will be labeled, and CTL\_CODE macros will be generated.
 
 ![Demo Video](./demo.gif)
 
